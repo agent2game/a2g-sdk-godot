@@ -1,0 +1,52 @@
+extends SceneTree
+## Offline checks of the SDK with the demo scene: no service and no API key needed.
+## Run: godot --headless --path . --script res://tests/test_client.gd
+
+func _initialize():
+	run.call_deferred()
+
+var failures := 0
+
+func check(condition: bool, message: String):
+	if not condition:
+		failures += 1
+		push_error("FAIL: " + message)
+
+## Feed a fake service reply through the SDK's own reply handler, as if /v1/decide had answered.
+func decide(a2g, adapter, guard, action: String, ttl_ms: int):
+	var request = {"id": a2g.entity_id(guard), "type": "guard", "observation": adapter.observe(guard), "legal_actions": adapter.legal_actions(guard)}
+	var reply = {"a2g": "0.1", "epoch": a2g.epoch, "decisions": [{"id": request.id, "source": "AI", "action": action, "label": action,
+		"confidence": 0.8, "ttl_ms": ttl_ms, "decision_id": "d_test"}]}
+	a2g._on_decisions(200, reply, [request], a2g.epoch, Time.get_ticks_msec())
+
+func run():
+	var main = load("res://demo/main.tscn").instantiate()
+	root.add_child(main)
+	current_scene = main
+	await process_frame
+	await process_frame
+	var a2g = root.get_node("A2G")
+	var guards = a2g.entities().filter(func(node): return node.get_meta("a2g_type") == "guard")
+	check(guards.size() == 3, "three guards are tracked")
+	check(not a2g.manifest.is_empty(), "manifest loaded from res://a2g_manifest.json")
+	var guard = guards[0]
+	main.player.position = guard.position + Vector2(50, 0)
+	check(main.adapter.legal_actions(guard) == ["chase", "wait", "retreat"], "a visible player allows all actions")
+	a2g.set_physics_process(false)
+	check(not a2g.execute(guard, 0.1), "native AI runs while AI mode is off")
+	a2g.set_ai_enabled(true)
+	check(not a2g.execute(guard, 0.1), "native AI runs without a fresh decision")
+	var before = guard.position
+	decide(a2g, main.adapter, guard, "retreat", 8000)
+	check(a2g.execute(guard, 0.5), "A2G controls the guard with a fresh decision")
+	check(guard.position.distance_to(main.player.position) > before.distance_to(main.player.position), "retreat moves away from the player")
+	decide(a2g, main.adapter, guard, "chase", 1000)
+	guard.get_meta("a2g_decision").received_at -= 5000
+	check(not a2g.execute(guard, 0.1), "an expired decision falls back to native AI")
+	check(not a2g.execute(guard, 0.1), "it stays on native AI until a new decision arrives")
+	a2g.set_ai_enabled(false)
+	if failures:
+		quit(1)
+		return
+	print("PASS: A2G SDK offline checks")
+	quit(0)

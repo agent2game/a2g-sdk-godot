@@ -1,0 +1,14 @@
+# Normalize line endings.
+* text=auto eol=lf
+
+# Only the addon goes into archives downloaded from GitHub or the Godot Asset Store.
+/.github export-ignore
+/demo export-ignore
+/tests export-ignore
+/.gitattributes export-ignore
+/.gitignore export-ignore
+/project.godot export-ignore
+/a2g_manifest.json export-ignore
+/README.md export-ignore
+/NOTICE export-ignore
+/LICENSE export-ignore

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Godot
+        run: |
+          curl -sSLo godot.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}-stable_linux.x86_64" godot
+      - name: Import project
+        run: ./godot --headless --path . --import || true
+      - name: Offline SDK tests
+        # Godot can exit 0 and still print engine errors; treat any ERROR line as a failure.
+        run: |
+          ./godot --headless --path . --script res://tests/test_client.gd 2>&1 | tee test.log
+          grep -q "PASS: A2G SDK offline checks" test.log
+          ! grep -E "ERROR" test.log

@@ -1,0 +1,17 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="A2G SDK demo"
+run/main_scene="res://demo/main.tscn"
+config/features=PackedStringArray("4.7")
+
+[autoload]
+
+A2G="*res://addons/a2g/a2g_client.gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/a2g/plugin.cfg")
