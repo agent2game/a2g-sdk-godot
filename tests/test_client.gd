@@ -26,6 +26,15 @@ func run():
 	await process_frame
 	await process_frame
 	var a2g = root.get_node("A2G")
+	check(a2g.base_url == "http://127.0.0.1:8787" and a2g.max_batch == 16, "defaults apply without project settings")
+	ProjectSettings.set_setting("a2g/service/url", "http://127.0.0.1:9000/")
+	ProjectSettings.set_setting("a2g/decisions/max_batch", 40)
+	var configured = load("res://addons/a2g/a2g_client.gd").new()
+	check(configured.base_url == "http://127.0.0.1:9000", "service URL comes from project settings")
+	check(configured.max_batch == 16, "max_batch never exceeds the protocol limit of 16")
+	configured.free()
+	ProjectSettings.set_setting("a2g/service/url", null)
+	ProjectSettings.set_setting("a2g/decisions/max_batch", null)
 	var guards = a2g.entities().filter(func(node): return node.get_meta("a2g_type") == "guard")
 	check(guards.size() == 3, "three guards are tracked")
 	check(not a2g.manifest.is_empty(), "manifest loaded from res://a2g_manifest.json")

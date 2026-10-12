@@ -32,6 +32,20 @@ func _physics_process(delta):
 
 The [integration guide](https://agent2game.org/guides/integrate/) and the [SDK reference](https://agent2game.org/implementations/godot-sdk/) cover the adapter contract, events, scopes, profiles and groups.
 
+## Settings
+
+Enabling the plugin adds these to **Project → Project Settings** under `a2g/`. Defaults apply when a setting is absent.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `a2g/service/url` | `http://127.0.0.1:8787` | Decision service base URL |
+| `a2g/manifest_path` | `res://a2g_manifest.json` | Your manifest |
+| `a2g/decisions/max_batch` | `16` | Entities per decide request (the protocol maximum is 16) |
+| `a2g/decisions/max_inflight` | `2` | Decide requests in flight at once |
+| `a2g/decisions/batch_interval` | `0.25` | Seconds between batch checks |
+| `a2g/decisions/default_interval_ms` | `3000` | Refresh interval when neither the adapter nor the manifest sets one |
+| `a2g/decisions/min_interval_ms` | `500` | Minimum time between two requests for one entity |
+
 ## In this repository
 
 | Path | Contents |

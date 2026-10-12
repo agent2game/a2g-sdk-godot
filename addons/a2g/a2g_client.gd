@@ -15,14 +15,30 @@ extends Node
 ## active scope (or {}). update_context() adds, replaces or removes scopes and profiles during the session.
 
 const PROTOCOL = "0.1"
-const BASE_URL = "http://127.0.0.1:8787"
-const MANIFEST_PATH = "res://a2g_manifest.json"
-const MAX_BATCH = 16
-const MAX_INFLIGHT = 2
-const BATCH_INTERVAL = 0.25
-const DEFAULT_INTERVAL_MS = 3000
-const MIN_INTERVAL_MS = 500
 const GROUP = "a2g"
+const PROTOCOL_MAX_BATCH = 16
+
+## Project Settings read at startup (Project → Project Settings → a2g). The values here are the defaults.
+const SETTINGS = {
+	"a2g/service/url": "http://127.0.0.1:8787",
+	"a2g/manifest_path": "res://a2g_manifest.json",
+	"a2g/decisions/max_batch": 16,
+	"a2g/decisions/max_inflight": 2,
+	"a2g/decisions/batch_interval": 0.25,
+	"a2g/decisions/default_interval_ms": 3000,
+	"a2g/decisions/min_interval_ms": 500,
+}
+
+static func setting(name: String):
+	return ProjectSettings.get_setting(name, SETTINGS[name])
+
+var base_url: String = str(setting("a2g/service/url")).trim_suffix("/")
+var manifest_path: String = setting("a2g/manifest_path")
+var max_batch: int = clampi(int(setting("a2g/decisions/max_batch")), 1, PROTOCOL_MAX_BATCH)
+var max_inflight: int = maxi(1, int(setting("a2g/decisions/max_inflight")))
+var batch_interval: float = float(setting("a2g/decisions/batch_interval"))
+var default_interval_ms: int = int(setting("a2g/decisions/default_interval_ms"))
+var min_interval_ms: int = int(setting("a2g/decisions/min_interval_ms"))
 
 var adapters: Dictionary = {}
 var world_provider: Callable
@@ -50,12 +66,12 @@ var last_population = -1
 
 func _ready():
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	var text = FileAccess.get_file_as_string(MANIFEST_PATH)
+	var text = FileAccess.get_file_as_string(manifest_path)
 	var parsed = JSON.parse_string(text) if text != "" else null
 	if parsed is Dictionary:
 		manifest = parsed
 	else:
-		last_error = "Missing or invalid " + MANIFEST_PATH
+		last_error = "Missing or invalid " + manifest_path
 	var timer = Timer.new()
 	timer.wait_time = 1.0
 	timer.timeout.connect(_send_telemetry)
@@ -137,7 +153,7 @@ func _request(method: int, path: String, body, timeout: float, callback: Callabl
 		_handle_status(code, data, headers)
 		callback.call(code, data))
 	var payload = JSON.stringify(body) if body != null else ""
-	if request.request(BASE_URL + path, ["Content-Type: application/json"], method, payload) != OK:
+	if request.request(base_url + path, ["Content-Type: application/json"], method, payload) != OK:
 		request.queue_free()
 		callback.call(0, null)
 
@@ -243,7 +259,7 @@ func _physics_process(delta):
 		_start_session()
 		return
 	batch_elapsed += delta
-	if batch_elapsed < BATCH_INTERVAL:
+	if batch_elapsed < batch_interval:
 		return
 	batch_elapsed = 0.0
 	var now = Time.get_ticks_msec()
@@ -260,13 +276,13 @@ func _physics_process(delta):
 				node.set_meta("a2g_trigger", event)  # the latest event wins until it is sent
 				soon = true
 		if soon:
-			node.set_meta("a2g_next", mini(node.get_meta("a2g_next", 0), node.get_meta("a2g_last_request", 0) + MIN_INTERVAL_MS))
-	if inflight >= MAX_INFLIGHT or now < backoff_until:
+			node.set_meta("a2g_next", mini(node.get_meta("a2g_next", 0), node.get_meta("a2g_last_request", 0) + min_interval_ms))
+	if inflight >= max_inflight or now < backoff_until:
 		return
 	var batch = []
 	var nodes = []
 	for node in current:
-		if batch.size() >= MAX_BATCH or node.get_meta("a2g_pending", false) or now < node.get_meta("a2g_next", 0):
+		if batch.size() >= max_batch or node.get_meta("a2g_pending", false) or now < node.get_meta("a2g_next", 0):
 			continue
 		var request = _decide_entity(node)
 		if request.is_empty():
@@ -338,7 +354,7 @@ func _on_decisions(code: int, data, batch: Array, request_epoch: int, started: i
 		decision["received_at"] = now
 		node.set_meta("a2g_decision", decision)
 		var adapter = adapter_of(node)
-		var interval = adapter.interval_ms(node) if adapter.has_method("interval_ms") else int(type_spec(node).get("refresh_ms", DEFAULT_INTERVAL_MS))
+		var interval = adapter.interval_ms(node) if adapter.has_method("interval_ms") else int(type_spec(node).get("refresh_ms", default_interval_ms))
 		node.set_meta("a2g_next", now + interval)
 
 func is_fresh(decision: Dictionary) -> bool:
