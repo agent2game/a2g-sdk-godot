@@ -2,7 +2,7 @@
 
 The Godot 4 client for the [Agent2Game (A2G) protocol](https://agent2game.org). Your game's characters ask an AI model which of their actions to take. Your code executes the choice, and your own AI takes over whenever there is no valid decision: no service, a timeout, a refusal or an expired decision.
 
-> **Status:** `0.1.0`, draft, for protocol 0.1. See the [implementation status](https://agent2game.org/implementations/service/#implementation-status).
+> **Status:** `0.1.1`, draft, for protocol 0.1. See the [implementation status](https://agent2game.org/implementations/service/#implementation-status).
 
 ## Install
 
@@ -10,7 +10,7 @@ Copy `addons/a2g/` into your project and enable **Project â†’ Project Settings â
 
 | SDK | Protocol | Godot |
 | --- | --- | --- |
-| 0.1.0 | 0.1 | 4.7 |
+| 0.1.1 | 0.1 | 4.7 |
 
 ## Quick start
 

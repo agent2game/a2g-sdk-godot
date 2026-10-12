@@ -29,6 +29,14 @@ const SETTINGS = {
 	"a2g/decisions/min_interval_ms": 500,
 }
 
+## Parse a JSON body without engine error output: error pages, empty bodies and HTML from proxies are
+## expected while a service is down, and must not flood the game's log. Returns null when it is not JSON.
+static func parse_json(text: String):
+	if text.strip_edges() == "":
+		return null
+	var json = JSON.new()
+	return json.data if json.parse(text) == OK else null
+
 static func setting(name: String):
 	return ProjectSettings.get_setting(name, SETTINGS[name])
 
@@ -148,7 +156,7 @@ func _request(method: int, path: String, body, timeout: float, callback: Callabl
 	add_child(request)
 	request.request_completed.connect(func(result, code, headers, response):
 		request.queue_free()
-		var data = JSON.parse_string(response.get_string_from_utf8()) if result == HTTPRequest.RESULT_SUCCESS else null
+		var data = parse_json(response.get_string_from_utf8()) if result == HTTPRequest.RESULT_SUCCESS else null
 		code = code if result == HTTPRequest.RESULT_SUCCESS else 0
 		_handle_status(code, data, headers)
 		callback.call(code, data))

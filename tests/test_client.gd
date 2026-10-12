@@ -26,6 +26,8 @@ func run():
 	await process_frame
 	await process_frame
 	var a2g = root.get_node("A2G")
+	check(a2g.parse_json("") == null and a2g.parse_json("<html>502</html>") == null, "non-JSON bodies parse to null")
+	check(a2g.parse_json('{"ok": true}').ok == true, "JSON bodies parse")
 	check(a2g.base_url == "http://127.0.0.1:8787" and a2g.max_batch == 16, "defaults apply without project settings")
 	ProjectSettings.set_setting("a2g/service/url", "http://127.0.0.1:9000/")
 	ProjectSettings.set_setting("a2g/decisions/max_batch", 40)
