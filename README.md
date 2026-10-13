@@ -28,7 +28,7 @@ func _physics_process(delta):
 	# your existing AI, unchanged
 ```
 
-4. Run a decision service, for example the [reference service](https://github.com/agent2game/a2g-service) (`docker run -d -p 127.0.0.1:8787:8787 -e OPENAI_API_KEY=... ghcr.io/agent2game/a2g-service:0.1.0`), and switch AI mode on with `A2G.set_ai_enabled(true)` or the `--a2g-ai` command-line flag. AI mode is off by default.
+4. Run a decision service, for example the [reference service](https://github.com/agent2game/a2g-service) (`docker run -d -p 127.0.0.1:8787:8787 -e OPENAI_API_KEY=... ghcr.io/agent2game/a2g-service:0.1.1`), and switch AI mode on with `A2G.set_ai_enabled(true)` or the `--a2g-ai` command-line flag. AI mode is off by default.
 
 When an entity makes several independent choices at once (how hard to work, whether to help, whether to ask for a raise), declare [decision slots](https://agent2game.org/specification/manifest/#decision-slots): `legal_actions` returns `{slot: [...]}` and `execute` receives `{slot: action}` for the slots A2G decided. To keep your game's odds and seeded replays, sample from the provider's probabilities with your own RNG:
 
