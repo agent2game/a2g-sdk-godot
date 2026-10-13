@@ -2,7 +2,7 @@
 
 The Godot 4 client for the [Agent2Game (A2G) protocol](https://agent2game.org). Your game's characters ask an AI model which of their actions to take. Your code executes the choice, and your own AI takes over whenever there is no valid decision: no service, a timeout, a refusal or an expired decision.
 
-> **Status:** `0.2.2`, draft, for protocol 0.1. See the [implementation status](https://agent2game.org/implementations/service/#implementation-status).
+> **Status:** `0.3.0`, draft, for protocol 0.1. See the [implementation status](https://agent2game.org/implementations/service/#implementation-status).
 
 ## Install
 
@@ -10,7 +10,7 @@ Copy `addons/a2g/` into your project and enable **Project → Project Settings �
 
 | SDK | Protocol | Godot |
 | --- | --- | --- |
-| 0.2.2 | 0.1 | 4.7 |
+| 0.3.0 | 0.1 | 4.7 |
 
 ## Quick start
 
@@ -28,7 +28,7 @@ func _physics_process(delta):
 	# your existing AI, unchanged
 ```
 
-4. Run a decision service, for example the [reference service](https://github.com/agent2game/a2g-service) (`docker run -d -p 127.0.0.1:8787:8787 -e OPENAI_API_KEY=... ghcr.io/agent2game/a2g-service:0.1.1`), and switch AI mode on with `A2G.set_ai_enabled(true)` or the `--a2g-ai` command-line flag. AI mode is off by default.
+4. Run a decision service, for example the [reference service](https://github.com/agent2game/a2g-service) (`docker run -d -p 127.0.0.1:8787:8787 -e OPENAI_API_KEY=... ghcr.io/agent2game/a2g-service:0.1.2`), and switch AI mode on with `A2G.set_ai_enabled(true)` or the `--a2g-ai` command-line flag. AI mode is off by default.
 
 When an entity makes several independent choices at once (how hard to work, whether to help, whether to ask for a raise), declare [decision slots](https://agent2game.org/specification/manifest/#decision-slots): `legal_actions` returns `{slot: [...]}` and `execute` receives `{slot: action}` for the slots A2G decided. To keep your game's odds and seeded replays, sample from the provider's probabilities with your own RNG:
 
@@ -51,6 +51,7 @@ Enabling the plugin adds these to **Project → Project Settings** under `a2g/`.
 | `a2g/decisions/batch_interval` | `0.25` | Seconds between batch checks |
 | `a2g/decisions/default_interval_ms` | `3000` | Refresh interval when neither the adapter nor the manifest sets one |
 | `a2g/decisions/min_interval_ms` | `500` | Minimum time between two requests for one entity |
+| `a2g/debug/strict` | `false` | Manifest drift checks print an error every time instead of one warning; use it in test runs |
 
 ## In this repository
 

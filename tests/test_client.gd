@@ -9,10 +9,11 @@ var failures := 0
 
 class WorkerAdapter:
 	var last = null
+	var drift = false
 	func observe(_node) -> Dictionary:
-		return {"stress": 0.5}
+		return {"stress": "high"} if drift else {"stress": 0.5}
 	func legal_actions(_node):
-		return {"effort": ["carry_on", "push_harder"], "help": []}
+		return {"effort": ["carry_on", "slack_off"]} if drift else {"effort": ["carry_on", "push_harder"], "help": []}
 	func execute(_node, actions, _delta) -> bool:
 		last = actions
 		return true
@@ -97,6 +98,14 @@ func run():
 	var exposed = worker.get_meta("a2g_decision").slots.effort.probabilities
 	check(exposed == {"carry_on": 0.01}, "probabilities given to the game are limited to offered actions within [0, 1]")
 	a2g.sample = Callable()
+	# Manifest drift: an unknown action and a field of the wrong type are reported and never sent.
+	worker_adapter.drift = true
+	check(a2g.validate(worker) == ['worker.observation.stress is "high", not a valid number', 'worker.effort: action "slack_off" is not in the manifest'],
+		"validate() names each drift problem")
+	check(a2g._decide_entity(worker).is_empty(), "a mismatching entity is not sent")
+	check(worker.get_meta("a2g_decision").code == "mismatch", "the entity stays native with code mismatch")
+	check(a2g.field_problems({"hp": "number"}, {"hp": 1, "mana": 2}, "world") == ["world.mana is not declared in the manifest"], "undeclared fields are reported")
+	worker_adapter.drift = false
 	a2g.set_ai_enabled(false)
 	if failures:
 		quit(1)

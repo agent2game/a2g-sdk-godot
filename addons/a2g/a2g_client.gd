@@ -31,6 +31,7 @@ const SETTINGS = {
 	"a2g/decisions/batch_interval": 0.25,
 	"a2g/decisions/default_interval_ms": 3000,
 	"a2g/decisions/min_interval_ms": 500,
+	"a2g/debug/strict": false,
 }
 
 ## Parse a JSON body without engine error output: error pages, empty bodies and HTML from proxies are
@@ -51,6 +52,11 @@ var max_inflight: int = maxi(1, int(setting("a2g/decisions/max_inflight")))
 var batch_interval: float = float(setting("a2g/decisions/batch_interval"))
 var default_interval_ms: int = int(setting("a2g/decisions/default_interval_ms"))
 var min_interval_ms: int = int(setting("a2g/decisions/min_interval_ms"))
+## Manifest drift checks: observations, world, scope state and legal actions are checked against the manifest before
+## anything is sent. A mismatch never reaches the service; the entity stays native and a warning is printed once per
+## problem. strict (tests, development) prints it as an error every time, so headless test runs fail on it.
+var strict: bool = bool(setting("a2g/debug/strict"))
+var _warned = {}
 
 var adapters: Dictionary = {}
 var sample: Callable  # (probabilities: Dictionary, node: Node, slot: String) -> String
@@ -305,6 +311,10 @@ func _physics_process(delta):
 			node.set_meta("a2g_next", mini(node.get_meta("a2g_next", 0), node.get_meta("a2g_last_request", 0) + min_interval_ms))
 	if inflight >= max_inflight or now < backoff_until:
 		return
+	var shared = field_problems(manifest.get("world_fields", {}), world(), "world")
+	if not shared.is_empty():
+		_mismatch(shared)  # the whole batch would be rejected
+		return
 	var batch = []
 	var nodes = []
 	for node in current:
@@ -331,8 +341,93 @@ func _physics_process(delta):
 			body["scope_state"] = active.state
 	_request(HTTPClient.METHOD_POST, "/v1/decide", body, 4.0, func(code, data): _on_decisions(code, data, batch, request_epoch, now))
 
+## Manifest drift check for one tracked node: its observation and legal actions against its type in the manifest.
+## Returns readable problems, empty when the node matches. Use it in the game's tests after changing entities.
+func validate(node: Node) -> Array:
+	var adapter = adapter_of(node)
+	var type = str(node.get_meta("a2g_type", ""))
+	if adapter == null:
+		return ["no adapter registered for type \"%s\"" % type]
+	if not manifest.get("entity_types", {}).has(type):
+		return ["type \"%s\" is not in the manifest" % type]
+	var spec = type_spec(node)
+	var problems = field_problems(spec.get("fields", {}), adapter.observe(node), type + ".observation")
+	var raw = adapter.legal_actions(node)
+	if spec.has("decisions"):
+		if not raw is Dictionary:
+			problems.append("%s.legal_actions must return {slot: Array} for a type with decisions" % type)
+		else:
+			for slot in raw:
+				if not spec.decisions.has(slot):
+					problems.append("%s: slot \"%s\" is not in the manifest's decisions" % [type, slot])
+					continue
+				for action in raw[slot]:
+					if not spec.decisions[slot].get("actions", {}).has(action):
+						problems.append("%s.%s: action \"%s\" is not in the manifest" % [type, slot, action])
+	else:
+		for action in (raw if raw is Array else []):
+			if not spec.get("actions", {}).has(action):
+				problems.append("%s: action \"%s\" is not in the manifest" % [type, action])
+	return problems
+
+## Problems of data against a field schema, with the same rules the service applies.
+static func field_problems(schema: Dictionary, data, label: String) -> Array:
+	if not data is Dictionary:
+		return [label + " must be a Dictionary"]
+	var problems = []
+	for name in data:
+		if not schema.has(name):
+			problems.append("%s.%s is not declared in the manifest" % [label, name])
+	for name in schema:
+		var where = "%s.%s" % [label, name]
+		if not data.has(name):
+			problems.append(where + " is missing")
+			continue
+		var kind = schema[name]
+		var value = data[name]
+		if kind is Dictionary:
+			if not value is Array or value.size() > int(kind.get("max", 0)):
+				problems.append("%s must be a list of at most %d objects" % [where, int(kind.get("max", 0))])
+			else:
+				for index in value.size():
+					problems.append_array(field_problems(kind.get("list", {}), value[index], "%s[%d]" % [where, index]))
+		elif kind is Array:
+			var found = false
+			for option in kind:
+				if typeof(option) == typeof(value) or ((option is int or option is float) and (value is int or value is float)):
+					if option == value:
+						found = true
+			if not found:
+				problems.append("%s is %s, not one of %s" % [where, JSON.stringify(value), JSON.stringify(kind)])
+		else:
+			var ok = false
+			match kind:
+				"boolean": ok = value is bool
+				"string": ok = value is String and value.length() <= 80
+				"entity_ref": ok = value is String and RegEx.create_from_string("^[A-Za-z0-9_.:-]{1,80}$").search(value) != null
+				"vector2": ok = value is Vector2 or (value is Array and value.size() == 2)
+				"vector3": ok = value is Vector3 or (value is Array and value.size() == 3)
+				_: ok = (value is int or value is float) and is_finite(float(value))
+			if not ok:
+				problems.append("%s is %s, not a valid %s" % [where, JSON.stringify(value), kind])
+	return problems
+
+func _mismatch(problems: Array):
+	last_error = ("Manifest mismatch: " + "; ".join(problems)).left(300)
+	for problem in problems:
+		if strict:
+			push_error("A2G manifest mismatch: " + problem)
+		elif not _warned.has(problem):
+			_warned[problem] = true
+			push_warning("A2G manifest mismatch: %s (the native AI keeps control; update the manifest or the adapter)" % problem)
+
 ## One decide entity, or {} when it should not be asked (observe-only or nothing legal).
 func _decide_entity(node: Node) -> Dictionary:
+	var problems = validate(node)
+	if not problems.is_empty():
+		_mismatch(problems)
+		node.set_meta("a2g_decision", {"source": "FALLBACK", "code": "mismatch", "reason": str(problems[0]).left(200), "ttl_ms": 0})
+		return {}
 	var adapter = adapter_of(node)
 	var spec = type_spec(node)
 	var raw = adapter.legal_actions(node)
