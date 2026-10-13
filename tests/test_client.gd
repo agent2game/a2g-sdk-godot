@@ -7,6 +7,16 @@ func _initialize():
 
 var failures := 0
 
+class WorkerAdapter:
+	var last = null
+	func observe(_node) -> Dictionary:
+		return {"stress": 0.5}
+	func legal_actions(_node):
+		return {"effort": ["carry_on", "push_harder"], "help": []}
+	func execute(_node, actions, _delta) -> bool:
+		last = actions
+		return true
+
 func check(condition: bool, message: String):
 	if not condition:
 		failures += 1
@@ -55,6 +65,28 @@ func run():
 	guard.get_meta("a2g_decision").received_at -= 5000
 	check(not a2g.execute(guard, 0.1), "an expired decision falls back to native AI")
 	check(not a2g.execute(guard, 0.1), "it stays on native AI until a new decision arrives")
+	# Decision slots: one choice per slot, empty slots are not asked, actions sampled with the game's RNG.
+	a2g.manifest.entity_types["worker"] = {"fields": {"stress": "number"}, "decision_ttl_ms": 8000, "decisions": {
+		"effort": {"actions": {"carry_on": "As usual", "push_harder": "More"}}, "help": {"actions": {"none": "Nothing", "help_colleague": "Help"}}}}
+	var worker_adapter = WorkerAdapter.new()
+	a2g.register_adapter("worker", worker_adapter)
+	var worker = Node2D.new()
+	main.add_child(worker)
+	a2g.track(worker, "worker")
+	var request = a2g._decide_entity(worker)
+	check(request.legal_actions == {"effort": ["carry_on", "push_harder"]}, "slots without legal actions are not asked")
+	var rng = RandomNumberGenerator.new()
+	rng.seed = 7
+	a2g.sample = a2g.sampler(rng)
+	var reply = {"a2g": "0.1", "epoch": a2g.epoch, "decisions": [{"id": request.id, "source": "AI", "ttl_ms": 8000, "decision_id": "d_w",
+		"slots": {"effort": {"action": "carry_on", "probabilities": {"carry_on": 0.0001, "push_harder": 0.9999}}, "help": {"action": "dance"}}}]}
+	a2g._on_decisions(200, reply, [request], a2g.epoch, Time.get_ticks_msec())
+	var decision = worker.get_meta("a2g_decision")
+	check(not is_same(decision.start_observation, request.observation), "the start observation is a copy, not the game's dictionary")
+	check(not decision.slots.has("help"), "a slot that was not asked or offered is dropped")
+	check(a2g.execute(worker, 0.1), "A2G controls an entity with slot decisions")
+	check(worker_adapter.last == {"effort": "push_harder"}, "the slot action is sampled from the probabilities")
+	a2g.sample = Callable()
 	a2g.set_ai_enabled(false)
 	if failures:
 		quit(1)

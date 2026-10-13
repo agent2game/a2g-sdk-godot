@@ -2,7 +2,7 @@
 
 The Godot 4 client for the [Agent2Game (A2G) protocol](https://agent2game.org). Your game's characters ask an AI model which of their actions to take. Your code executes the choice, and your own AI takes over whenever there is no valid decision: no service, a timeout, a refusal or an expired decision.
 
-> **Status:** `0.1.1`, draft, for protocol 0.1. See the [implementation status](https://agent2game.org/implementations/service/#implementation-status).
+> **Status:** `0.2.0`, draft, for protocol 0.1. See the [implementation status](https://agent2game.org/implementations/service/#implementation-status).
 
 ## Install
 
@@ -10,7 +10,7 @@ Copy `addons/a2g/` into your project and enable **Project â†’ Project Settings â
 
 | SDK | Protocol | Godot |
 | --- | --- | --- |
-| 0.1.1 | 0.1 | 4.7 |
+| 0.2.0 | 0.1 | 4.7 |
 
 ## Quick start
 
@@ -30,7 +30,13 @@ func _physics_process(delta):
 
 4. Run a decision service and switch AI mode on with `A2G.set_ai_enabled(true)` or the `--a2g-ai` command-line flag. AI mode is off by default.
 
-The [integration guide](https://agent2game.org/guides/integrate/) and the [SDK reference](https://agent2game.org/implementations/godot-sdk/) cover the adapter contract, events, scopes, profiles and groups.
+When an entity makes several independent choices at once (how hard to work, whether to help, whether to ask for a raise), declare [decision slots](https://agent2game.org/specification/manifest/#decision-slots): `legal_actions` returns `{slot: [...]}` and `execute` receives `{slot: action}` for the slots A2G decided. To keep your game's odds and seeded replays, sample from the provider's probabilities with your own RNG:
+
+```gdscript
+A2G.sample = A2G.sampler(game_rng)   # a seeded RandomNumberGenerator
+```
+
+The [integration guide](https://agent2game.org/guides/integrate/) and the [SDK reference](https://agent2game.org/implementations/godot-sdk/) cover the adapter contract, events, scopes, profiles, groups, slots and sampling.
 
 ## Settings
 

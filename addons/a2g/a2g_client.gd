@@ -4,6 +4,8 @@ extends Node
 ## The game registers one adapter per entity type and calls track() and execute() from its entities.
 ## Adapter methods: observe(node) -> Dictionary, legal_actions(node) -> Array, execute(node, action, delta) -> bool
 ## (false = the action was blocked and the adapter did something safe instead).
+## Types with decision slots (manifest "decisions"): legal_actions returns {slot: Array} for the slots to ask, and
+## execute receives {slot: action} for the slots A2G decided; the adapter runs the native AI for every other slot.
 ## Optional adapter methods:
 ##   state(node) -> String            actual executed state, for telemetry
 ##   position(node) -> Vector2/3      lets the service compute nearby entities and group members
@@ -13,6 +15,8 @@ extends Node
 ## A type whose legal_actions are always empty is observe-only: reported in telemetry (e.g. the player), never decided.
 ## world_provider returns the shared world state; scope_provider returns {"scope": name, "state": {...}} for the
 ## active scope (or {}). update_context() adds, replaces or removes scopes and profiles during the session.
+## sample (optional) draws each AI action from the provider's probabilities, e.g. A2G.sample = A2G.sampler(game_rng),
+## so A2G decisions vary like native AI and seeded replays stay identical. It runs on a decision's first execute().
 
 const PROTOCOL = "0.1"
 const GROUP = "a2g"
@@ -49,6 +53,7 @@ var default_interval_ms: int = int(setting("a2g/decisions/default_interval_ms"))
 var min_interval_ms: int = int(setting("a2g/decisions/min_interval_ms"))
 
 var adapters: Dictionary = {}
+var sample: Callable  # (probabilities: Dictionary, node: Node, slot: String) -> String
 var world_provider: Callable
 var scope_provider: Callable
 var manifest: Dictionary = {}
@@ -181,6 +186,19 @@ func _handle_status(code: int, data, headers: PackedStringArray):
 					wait_s = maxi(1, int(header.split(":", true, 1)[1].strip_edges()))
 			backoff_until = Time.get_ticks_msec() + wait_s * 1000
 			last_error = "Rate limited; retrying in %d s" % wait_s
+
+## A sampler driven by the game's own RandomNumberGenerator (seeded for replays).
+static func sampler(rng: RandomNumberGenerator) -> Callable:
+	return func(probabilities: Dictionary, _node, _slot) -> String:
+		var total = 0.0
+		for action in probabilities:
+			total += float(probabilities[action])
+		var roll = rng.randf() * total
+		for action in probabilities:
+			roll -= float(probabilities[action])
+			if roll < 0:
+				return action
+		return probabilities.keys()[-1]
 
 func check_service():
 	if health_busy or Time.get_ticks_msec() - last_health_check < 5000:
@@ -316,8 +334,20 @@ func _physics_process(delta):
 ## One decide entity, or {} when it should not be asked (observe-only or nothing legal).
 func _decide_entity(node: Node) -> Dictionary:
 	var adapter = adapter_of(node)
-	var actions = type_spec(node).get("actions", {})
-	var legal = adapter.legal_actions(node).filter(func(action): return actions.has(action))
+	var spec = type_spec(node)
+	var raw = adapter.legal_actions(node)
+	var legal
+	if spec.has("decisions"):
+		legal = {}
+		if raw is Dictionary:
+			for slot in raw:
+				var slot_actions = spec.decisions.get(slot, {}).get("actions", {})
+				var allowed = Array(raw[slot]).filter(func(action): return slot_actions.has(action))
+				if not allowed.is_empty():
+					legal[slot] = allowed
+	else:
+		var actions = spec.get("actions", {})
+		legal = (raw if raw is Array else []).filter(func(action): return actions.has(action))
 	if legal.is_empty():
 		return {}
 	var request = {"id": entity_id(node), "type": node.get_meta("a2g_type"), "observation": adapter.observe(node), "legal_actions": legal}
@@ -350,10 +380,24 @@ func _on_decisions(code: int, data, batch: Array, request_epoch: int, started: i
 		_finish(node)
 		var reply = replies.get(request.id, {})
 		var decision = {"source": "FALLBACK", "code": str(reply.get("code", "unavailable")), "reason": str(reply.get("reason", error if error != "" else "Missing decision")), "ttl_ms": 0}
-		if reply.get("source") == "AI" and reply.get("action") in request.legal_actions and reply.get("decision_id") is String:
-			decision = {"source": "AI", "action": reply.action, "label": str(reply.get("label", "")), "confidence": reply.get("confidence"),
+		var legal = request.legal_actions
+		var slots = {}  # slots whose action was offered; a missing or invalid slot stays with the native AI
+		if legal is Dictionary and reply.get("slots") is Dictionary:
+			for slot in reply.slots:
+				var result = reply.slots[slot]
+				if legal.has(slot) and result is Dictionary and (not result.has("action") or result.action in legal[slot]):
+					slots[slot] = result
+		var valid = reply.get("action") in legal if legal is Array else slots.values().any(func(result): return result.has("action"))
+		if reply.get("source") == "AI" and valid and reply.get("decision_id") is String:
+			# duplicate(): games often mutate one world or observation dictionary in place
+			decision = {"source": "AI", "label": str(reply.get("label", "")), "confidence": reply.get("confidence"),
 				"decision_id": reply.decision_id, "cached": reply.get("cached", false) == true, "trigger": request.get("trigger", ""),
-				"ttl_ms": int(reply.get("ttl_ms", 12000)), "start_observation": request.observation, "start_world": world()}
+				"ttl_ms": int(reply.get("ttl_ms", 12000)), "start_observation": request.observation.duplicate(true), "start_world": world().duplicate(true)}
+			if legal is Array:
+				decision["action"] = reply.action
+				decision["probabilities"] = reply.get("probabilities", {}) if reply.get("probabilities") is Dictionary else {}
+			else:
+				decision["slots"] = slots
 			last_ai_reply_ms = now
 			last_error = ""
 		else:
@@ -376,28 +420,73 @@ func execute(node: Node, delta: float) -> bool:
 		return false
 	var decision: Dictionary = node.get_meta("a2g_decision", {})
 	if not is_fresh(decision):
-		_finish(node)
+		_finish(node, true)
 		if adapter.has_method("release"):
 			adapter.release(node)
 		return false
-	if not adapter.execute(node, decision.action, delta):
+	if not decision.get("ran", false):
+		_choose(node, decision)
+	decision["ran"] = true
+	if not adapter.execute(node, decision.actions if decision.has("slots") else decision.action, delta):
 		decision["blocked"] = true
 	return true
 
+## Fix the executed action(s) once: sampled from the probabilities when sample is set, else the service's choice.
+func _choose(node: Node, decision: Dictionary):
+	var pick = func(result: Dictionary, slot: String) -> String:
+		var options = {}
+		var probabilities = result.get("probabilities", {})
+		if probabilities is Dictionary:
+			for action in probabilities:
+				if (probabilities[action] is float or probabilities[action] is int) and probabilities[action] > 0:
+					options[action] = probabilities[action]
+		if not sample.is_valid() or options.is_empty():
+			return result.action
+		var chosen = sample.call(options, node, slot)
+		return chosen if options.has(chosen) else result.action
+	if decision.has("slots"):
+		var actions = {}
+		for slot in decision.slots:
+			if decision.slots[slot].has("action"):
+				var legal = type_spec(node).get("decisions", {}).get(slot, {}).get("actions", {})
+				var result = decision.slots[slot]
+				var probabilities = result.get("probabilities", {})
+				var filtered = {}
+				if probabilities is Dictionary:
+					for action in probabilities:
+						if legal.has(action):
+							filtered[action] = probabilities[action]
+				actions[slot] = pick.call({"action": result.action, "probabilities": filtered}, slot)
+		decision["actions"] = actions
+	else:
+		decision["action"] = pick.call(decision, "")
+
 ## Report the outcome of the node's current AI decision once: numeric deltas of its observation and the world.
-func _finish(node: Node):
+## expiring = its TTL ran out with no new decision. A decision that ran and is replaced counts as executed.
+func _finish(node: Node, expiring := false):
 	var decision: Dictionary = node.get_meta("a2g_decision", {})
 	if decision.get("source") != "AI" or decision.get("reported", false):
 		return
 	decision["reported"] = true
 	var adapter = adapter_of(node)
-	var status = "blocked" if decision.get("blocked", false) else ("executed" if is_fresh(decision) else "expired")
+	var status = "blocked" if decision.get("blocked", false) else ("executed" if not expiring and (decision.get("ran", false) or is_fresh(decision)) else "expired")
 	var outcome = {}
 	_add_deltas(outcome, "", decision.start_observation, adapter.observe(node))
 	_add_deltas(outcome, "world_", decision.start_world, world())
 	outcome["seconds"] = snappedf((Time.get_ticks_msec() - decision.received_at) / 1000.0, 0.1)
-	var body = {"client_id": client_id, "entity_id": entity_id(node), "decision_id": decision.decision_id, "action": decision.action, "status": status, "outcome": outcome}
+	var body = {"client_id": client_id, "entity_id": entity_id(node), "decision_id": decision.decision_id, "status": status, "outcome": outcome}
+	if decision.has("slots"):
+		body["actions"] = decision.get("actions", _slot_actions(decision))
+	else:
+		body["action"] = decision.action
 	_request(HTTPClient.METHOD_POST, "/v1/report", body, 2.0, func(_code, _data): pass)
+
+func _slot_actions(decision: Dictionary) -> Dictionary:
+	var actions = {}
+	for slot in decision.get("slots", {}):
+		if decision.slots[slot].has("action"):
+			actions[slot] = decision.slots[slot].action
+	return actions
 
 func _add_deltas(outcome: Dictionary, prefix: String, before: Dictionary, after: Dictionary):
 	for name in before:
@@ -429,6 +518,11 @@ func _send_telemetry():
 		for key in ["source", "action", "label", "confidence", "code", "reason", "latency_ms", "cached", "trigger", "decision_id"]:
 			if decision.get(key) != null and str(decision.get(key)) != "":
 				compact[key] = decision[key]
+		if decision.has("slots"):
+			var executed = decision.get("actions", _slot_actions(decision))
+			compact["action"] = ", ".join(executed.keys().map(func(slot): return "%s=%s" % [slot, executed[slot]]))
+			compact["slots"] = executed
+			compact.erase("label")
 		if decision.has("received_at"):
 			compact["age_ms"] = now - decision.received_at
 		var item = {"id": entity_id(node), "type": node.get_meta("a2g_type"), "name": str(node.name),
