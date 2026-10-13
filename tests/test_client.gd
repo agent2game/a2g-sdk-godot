@@ -94,6 +94,8 @@ func run():
 	a2g._on_decisions(200, forged, [offered], a2g.epoch, Time.get_ticks_msec())
 	a2g.execute(worker, 0.1)
 	check(worker_adapter.last == {"effort": "carry_on"}, "sampling is limited to the actions the request offered")
+	var exposed = worker.get_meta("a2g_decision").slots.effort.probabilities
+	check(exposed == {"carry_on": 0.01}, "probabilities given to the game are limited to offered actions within [0, 1]")
 	a2g.sample = Callable()
 	a2g.set_ai_enabled(false)
 	if failures:

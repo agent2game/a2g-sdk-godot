@@ -396,8 +396,11 @@ func _on_decisions(code: int, data, batch: Array, request_epoch: int, started: i
 				"legal": legal}
 			if legal is Array:
 				decision["action"] = reply.action
-				decision["probabilities"] = reply.get("probabilities", {}) if reply.get("probabilities") is Dictionary else {}
+				decision["probabilities"] = _clean_probabilities(reply.get("probabilities"), legal)
 			else:
+				for slot in slots:
+					if slots[slot].has("probabilities"):
+						slots[slot]["probabilities"] = _clean_probabilities(slots[slot].probabilities, legal[slot])
 				decision["slots"] = slots
 			last_ai_reply_ms = now
 			last_error = ""
@@ -476,6 +479,16 @@ func _finish(node: Node, expiring := false):
 		body["action"] = decision.action
 	_request(HTTPClient.METHOD_POST, "/v1/report", body, 2.0, func(_code, _data): pass)
 
+## Probabilities as the game may use them: only for offered actions and within [0, 1].
+func _clean_probabilities(probabilities, legal: Array) -> Dictionary:
+	var clean = {}
+	if probabilities is Dictionary:
+		for action in probabilities:
+			var p = probabilities[action]
+			if action in legal and (p is float or p is int) and p >= 0 and p <= 1:
+				clean[action] = p
+	return clean
+
 func _slot_actions(decision: Dictionary) -> Dictionary:
 	var actions = {}
 	for slot in decision.get("slots", {}):
@@ -515,7 +528,8 @@ func _send_telemetry():
 				compact[key] = decision[key]
 		if decision.has("slots"):
 			var executed = decision.get("actions", _slot_actions(decision))
-			compact["action"] = ", ".join(executed.keys().map(func(slot): return "%s=%s" % [slot, executed[slot]]))
+			var summary = ", ".join(executed.keys().map(func(slot): return "%s=%s" % [slot, executed[slot]]))
+			compact["action"] = summary if summary.length() <= 80 else summary.left(79) + "…"  # telemetry strings are at most 80 chars
 			compact["slots"] = executed
 			compact.erase("label")
 		if decision.has("received_at"):
