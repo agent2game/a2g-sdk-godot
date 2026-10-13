@@ -392,7 +392,8 @@ func _on_decisions(code: int, data, batch: Array, request_epoch: int, started: i
 			# duplicate(): games often mutate one world or observation dictionary in place
 			decision = {"source": "AI", "label": str(reply.get("label", "")), "confidence": reply.get("confidence"),
 				"decision_id": reply.decision_id, "cached": reply.get("cached", false) == true, "trigger": request.get("trigger", ""),
-				"ttl_ms": int(reply.get("ttl_ms", 12000)), "start_observation": request.observation.duplicate(true), "start_world": world().duplicate(true)}
+				"ttl_ms": int(reply.get("ttl_ms", 12000)), "start_observation": request.observation.duplicate(true), "start_world": world().duplicate(true),
+				"legal": legal}
 			if legal is Array:
 				decision["action"] = reply.action
 				decision["probabilities"] = reply.get("probabilities", {}) if reply.get("probabilities") is Dictionary else {}
@@ -432,14 +433,16 @@ func execute(node: Node, delta: float) -> bool:
 	return true
 
 ## Fix the executed action(s) once: sampled from the probabilities when sample is set, else the service's choice.
+## Only actions this request offered can be picked: the service's probabilities are never trusted to name a legal action.
 func _choose(node: Node, decision: Dictionary):
-	var pick = func(result: Dictionary, slot: String) -> String:
+	var pick = func(result: Dictionary, legal: Array, slot: String) -> String:
 		var options = {}
 		var probabilities = result.get("probabilities", {})
 		if probabilities is Dictionary:
 			for action in probabilities:
-				if (probabilities[action] is float or probabilities[action] is int) and probabilities[action] > 0:
-					options[action] = probabilities[action]
+				var p = probabilities[action]
+				if action in legal and (p is float or p is int) and p > 0:
+					options[action] = p
 		if not sample.is_valid() or options.is_empty():
 			return result.action
 		var chosen = sample.call(options, node, slot)
@@ -448,18 +451,10 @@ func _choose(node: Node, decision: Dictionary):
 		var actions = {}
 		for slot in decision.slots:
 			if decision.slots[slot].has("action"):
-				var legal = type_spec(node).get("decisions", {}).get(slot, {}).get("actions", {})
-				var result = decision.slots[slot]
-				var probabilities = result.get("probabilities", {})
-				var filtered = {}
-				if probabilities is Dictionary:
-					for action in probabilities:
-						if legal.has(action):
-							filtered[action] = probabilities[action]
-				actions[slot] = pick.call({"action": result.action, "probabilities": filtered}, slot)
+				actions[slot] = pick.call(decision.slots[slot], decision.legal.get(slot, []), slot)
 		decision["actions"] = actions
 	else:
-		decision["action"] = pick.call(decision, "")
+		decision["action"] = pick.call(decision, decision.legal, "")
 
 ## Report the outcome of the node's current AI decision once: numeric deltas of its observation and the world.
 ## expiring = its TTL ran out with no new decision. A decision that ran and is replaced counts as executed.

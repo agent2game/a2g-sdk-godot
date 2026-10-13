@@ -86,6 +86,14 @@ func run():
 	check(not decision.slots.has("help"), "a slot that was not asked or offered is dropped")
 	check(a2g.execute(worker, 0.1), "A2G controls an entity with slot decisions")
 	check(worker_adapter.last == {"effort": "push_harder"}, "the slot action is sampled from the probabilities")
+	# Sampling never picks an action this request did not offer, whatever the probabilities say.
+	var offered = {"id": request.id, "type": "worker", "observation": request.observation, "legal_actions": {"effort": ["carry_on"]}}
+	var forged = {"a2g": "0.1", "epoch": a2g.epoch, "decisions": [{"id": request.id, "source": "AI", "ttl_ms": 8000, "decision_id": "d_w2",
+		"slots": {"effort": {"action": "carry_on", "probabilities": {"carry_on": 0.01, "push_harder": 0.99}}}}]}
+	a2g.sample = func(_probabilities, _node, _slot): return "push_harder"
+	a2g._on_decisions(200, forged, [offered], a2g.epoch, Time.get_ticks_msec())
+	a2g.execute(worker, 0.1)
+	check(worker_adapter.last == {"effort": "carry_on"}, "sampling is limited to the actions the request offered")
 	a2g.sample = Callable()
 	a2g.set_ai_enabled(false)
 	if failures:
